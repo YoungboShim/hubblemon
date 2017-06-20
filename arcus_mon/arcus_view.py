@@ -31,7 +31,18 @@ import common.core
 import kazoo
 
 
-arcus_preset = [['bytes', 'total_malloced', 'engine_maxbytes'], 'curr_items', (lambda x: x['get_hits'] / x['cmd_get'] * 100, 'hit_ratio'), ['cmd_get', 'cmd_set'], 'cmd_get', 'cmd_set', 'evictions', 'reclaimed', ['bytes_read', 'bytes_written'], ['rusage_user', 'rusage_system'], 'curr_connections', ['cmd_lop_create', 'cmd_lop_insert', 'cmd_lop_get', 'cmd_lop_delete'], ['cmd_sop_create', 'cmd_sop_delete'], ['cmd_sop_insert', 'cmd_sop_get', 'cmd_sop_exist'], ['cmd_bop_create', 'cmd_bop_delete'], ['cmd_bop_insert', 'cmd_bop_update', 'cmd_bop_incr', 'cmd_bop_decr'], ['cmd_bop_get', 'bop_get_ehits', 'bop_get_nhits'], ['cmd_bop_count', 'cmd_bop_mget', 'cmd_bop_smget'], ['getattr_hits', 'setattr_hits'], ['cmd_flush', 'cmd_flush_prefix'], ['hb_count', 'hb_latency'], ['sticky_bytes', 'sticky_limit'], ['incr_hits', 'decr_hits']]
+arcus_preset = [['bytes', 'total_malloced', 'engine_maxbytes'], 'curr_items', \
+		(lambda x: x['get_hits'] / x['cmd_get'] * 100, 'hit_ratio'), \
+		['cmd_get', 'cmd_set'], 'cmd_get', 'cmd_set', 'evictions', 'reclaimed', ['bytes_read', 'bytes_written'],\
+		['rusage_user', 'rusage_system'], 'curr_connections', ['cmd_bop_get', 'bop_get_ehits', 'bop_get_nhits'],\
+		[(lambda x: (x['bop_get_ehits'] + x['bop_get_nhits']) / x['cmd_bop_get'] * 100, 'bop_hit_ratio'),\
+		 (lambda x: x['bop_get_ehits'] / (x['bop_get_ehits'] + x['bop_get_nhits']) * 100, 'bop_elem_hit_ratio')], \
+		['cmd_lop_create', 'cmd_lop_insert', 'cmd_lop_get', 'cmd_lop_delete'],\
+		['cmd_sop_create', 'cmd_sop_delete', 'cmd_sop_insert', 'cmd_sop_get', 'cmd_sop_exist'],\
+		['cmd_bop_create', 'cmd_bop_delete', 'cmd_bop_insert', 'cmd_bop_update', 'cmd_bop_incr', 'cmd_bop_decr'],\
+		['cmd_bop_count', 'cmd_bop_mget', 'cmd_bop_smget'],\
+		['incr_hits', 'decr_hits', 'getattr_hits', 'setattr_hits'],\
+		['cmd_flush', 'cmd_flush_prefix', 'hb_count', 'hb_latency'], ]
 
 
 def arcus_view(path, title = ''):
@@ -194,8 +205,8 @@ def get_chart_data(param):
 
 		if prefix == '[ALL]':
 			results = []
-			client, port = instance_name.split('/')
-			file_list = common.core.get_data_list_of_client(client, port + '-')
+			entity, port = instance_name.split('/')
+			file_list = common.core.get_table_list_of_entity(entity, port + '-')
 
 			for file in file_list:
 				file_path = os.path.join(instance, file)
@@ -203,6 +214,8 @@ def get_chart_data(param):
 				tmp_port, prefix_name = file.split('-', 1)
 				curr_prefix, dummy = prefix_name.split('.rrd')
 				results.append(common.core.loader(file_path, arcus_prefix_preset, curr_prefix)) # all lists
+
+			results = data_loader.loader_factory.serial(results)
 		else:
 			path = os.path.join(instance, '%s-%s' % (port, prefix))
 			results = common.core.loader(path, arcus_prefix_preset, title=prefix)
@@ -248,9 +261,9 @@ def get_chart_list(param):
 		if cloud == '' or instance == '':
 			return (['cloud', 'instance', 'prefix'], arcus_cloud_map)
 
-		client, port = instance.split('/')
+		entity, port = instance.split('/')
 
-		file_list = common.core.get_data_list_of_client(client, port + '-')
+		file_list = common.core.get_table_list_of_entity(entity, port + '-')
 
 		prefix_list = ['[ALL]']
 

@@ -22,6 +22,7 @@ import socket
 import pickle
 import psutil
 import zlib
+import threading
 
 from datetime import datetime
 
@@ -73,7 +74,7 @@ class listener:
 			data = pickle.dumps(result)
 			self.send_stat(data)
 			ret = self.sock_listener.recv(2) # recv ok
-			#print(ret)
+			print(ret)
 			time.sleep(self.sleep)
 
 
@@ -141,6 +142,7 @@ class collectd:
 			
 	def collect(self):
 		stat = {}
+		threads = []
 
 		for p in self.plugins:
 			result = p.collect()
@@ -153,8 +155,9 @@ class collectd:
 
 			for k, v in result.items():
 				stat[p.type][k] = v
-
+			
 		return stat
+				
 
 	def send_stat_all(self, stat):
 		data = pickle.dumps(stat)
@@ -170,6 +173,9 @@ class collectd:
 			lst.close()
 
 	def daemon(self):
+		for p in self.plugins:
+			p.sleep_info = self.sleep
+
 		while True:
 			try:
 				self.connect(); # try connect if disconnect
@@ -202,7 +208,7 @@ class collectd:
 				result['datetime'] = datetime.now()
 				result['client'] = self.name
 
-				#print(result)
+				print(result)
 				self.send_stat_all(result)
 				time.sleep(self.sleep)
 

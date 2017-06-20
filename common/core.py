@@ -27,52 +27,38 @@ import data_loader.basic_loader
 import data_loader.loader_factory
 
 
-hubblemon_path = os.path.join(os.path.dirname(__file__), '..')
 mod_cache = {}
 mod_query_cache = {}
 
 #
 # default loader settings
 #
-get_default_local_handle = data_loader.loader_factory.get_rrd_handle
-#get_default_local_handle = data_loader.loader_factory.get_tsdb_test_handle
 
-get_default_remote_handle = data_loader.loader_factory.get_remote_handle
-
-def loader(path, filter = None, title = ''):
+def loader(entity_table, filter = None, title = ''):
 	results = []
 
-	info = _get_listener_info(path)
+	info = _get_listener_info(entity_table)
+
+	lisnter = info[0]
+	storage_manager = info[1]
+
+	handle = storage_manager.get_handle(entity_table)
+
+	try:
+		return data_loader.basic_loader.basic_loader(handle, filter, title)
+	except:
+		return data_loader.basic_loader.basic_loader(None, [])
+
 	
-	if info[2] == 'local':
-		try:
-			handle = get_default_local_handle(path)
-			return data_loader.basic_loader.basic_loader(handle, filter, title)
-		except:
-			return data_loader.basic_loader.basic_loader(None, [])
-	else: # remote
-		try:
-			host, port = info[0].split(':')
-			handle = get_default_remote_handle(host, int(port), path)
-			return data_loader.basic_loader.basic_loader(handle, filter, title)
-		except:
-			return data_loader.basic_loader.basic_loader(None, [])
-	
-
-		
-
-
 #
 # data, system handling
 #
+def _get_listener_info(entity_table):
+	#print(entity_table)
+	entity = entity_table.split('/')[0]
+	#ip = socket.gethostbyname(entity)
 
-
-def _get_listener_info(file):
-	#print(file)
-	name = file.split('/')[0]
-	#ip = socket.gethostbyname(name)
-
-	ret = binascii.crc32(bytes(name, 'utf-8'))
+	ret = binascii.crc32(bytes(entity, 'utf-8'))
 	n = len(common.settings.listener_list)
 	idx = ret % n
 
@@ -80,102 +66,40 @@ def _get_listener_info(file):
 	
 
 
-def _get_local_data_path(file):
-	data_path = _get_listener_info(file)[1]
-	if data_path[0] != '/':
-		data_path = os.path.join(hubblemon_path, data_path)
-	
-	return os.path.join(data_path, file)
-
-
-def _get_local_client_pathes():
-	result = []
-	for item in common.settings.listener_list:
-		path = item[1]
-		if path[0] != '/':
-			path = os.path.join(hubblemon_path, path)
-
-		result.append(path)
-
-	return result
-
-def get_local_data_handle(path):
-	path = _get_local_data_path(path)
-	fd = open(path)
-	fd.path = path
-	return fd
 
 # local or remote
-def get_client_list():
-	client_list = []
+def get_entity_list():
+	entity_map = {}
 
 	for item in common.settings.listener_list:
-		if item[2] == 'local':
-			path = item[1]
-			if path[0] != '/':
-				path = os.path.join(hubblemon_path, path)
+		storage_manager = item[1]
+		entities = storage_manager.get_entity_list()
+		for entity in entities:
+			entity_map[entity] = 1
 
-			for dir in os.listdir(path):
-				dir_path = os.path.join(path, dir)
-
-				if os.path.isdir(dir_path):
-					client_list.append(dir)
-
-		else: # remote
-			address = item[0]
-			host, port = address.split(':')
-			port = int(port)
-			handle = get_default_remote_handle(host, port)
-			client_list += handle.get_client_list()
-
-	return client_list
+	return list(entity_map.keys())
 
 
 # local or remote
-def get_data_list_of_client(client, prefix):
-	info = _get_listener_info(client)
+def get_table_list_of_entity(entity, prefix):
+	info = _get_listener_info(entity)
 	data_list = []
 
-	if info[2] == 'local':
-		path = _get_local_data_path(client)
-
-		for file in os.listdir(path):
-			if file.startswith(prefix):
-				data_list.append(file)
-
-	else: # remote
-		address = info[0]
-		host, port = address.split(':')
-		port = int(port)
-		handle = get_default_remote_handle(host, port)
-		data_list += handle.get_data_list_of_client(client, prefix)
+	storage_manager = info[1]
+	data_list += storage_manager.get_table_list_of_entity(entity, prefix)
 
 	return data_list
 	
 
 # local or remote
-def get_all_data_list(prefix):
-	data_list = []
+def get_all_table_list(prefix):
+	table_list = []
 
 	for item in common.settings.listener_list:
-		if item[2] == 'local':
-			path = item[1]
-			for dir in os.listdir(path):
-				dir_path = os.path.join(path, dir)
+		storage_manager = item[1]
+		table_list += storage_manager.get_all_table_list(prefix)
 
-				if os.path.isdir(dir_path):
-					for file in os.listdir(dir_path):
-						if file.startswith(prefix):
-							data_list.append(dir + '/' + file)						
-		else:
-			address = item[0]
-			host, port = address.split(':')
-			port = int(port)
-			handle = get_default_remote_handle(host, port)
-			data_list += handle.get_all_data_list(prefix)
-
-
-	return data_list
+	return table_list
 
 
 #
@@ -311,22 +235,33 @@ def get_addon_page(param):
 import psutil_mon.psutil_view
 import arcus_mon.arcus_view
 import redis_mon.redis_view
+import fnmatch
 
 
-def system_view(client, item):
-	if isinstance(client, str):
-		clients = [ client ]
+def system_view(entity, item = 'brief', type='serial'):
+	if isinstance(entity, str):
+		if '*' in entity or '?' in entity: # wild card
+			entity_list = []
+			all_entities = get_entity_list()
+
+			for c in all_entities:
+				if fnmatch.fnmatch(c, entity):
+					entity_list.append(c)
+		else:
+			entity_list = [ entity ]
 	else: # list, tuple
-		clients = client
+		entity_list = entity
 
 	ret = []
-	for client in clients:
-		ret += psutil_mon.psutil_view.system_view(client, item)
+	for entity in entity_list:
+		ret.append(psutil_mon.psutil_view.system_view(entity, item))
 
-	return ret
+	if type == 'merge':
+		return data_loader.loader_factory.merge_loader(ret)
 
+	return data_loader.loader_factory.serial_loader(ret)
 
-def arcus_view(instance): # client/arcus_port
+def arcus_view(instance): # entity/arcus_port
 	if isinstance(instance, str):
 		instances = [ instance ]
 	else: # list, tuple
@@ -336,7 +271,7 @@ def arcus_view(instance): # client/arcus_port
 	for instance in instances:
 		ret.append(arcus_mon.arcus_view.arcus_view(instance))
 
-	return ret
+	return data_loader.loader_factory.serial_loader(ret)
 
 
 def arcus_instance_list(name):

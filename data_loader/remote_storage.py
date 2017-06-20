@@ -1,4 +1,3 @@
-
 #
 # Hubblemon - Yet another general purpose system monitor
 #
@@ -25,11 +24,11 @@ import pickle
 
 
 
-class remote_data_reader:
-	def __init__(self, host, port, file = None):
+class remote_handle:
+	def __init__(self, entity_table, host, port):
 		self.host = host
 		self.port = port
-		self.file = file
+		self.entity_table = entity_table
 
 		self.sock = None
 		self.version = 0.1
@@ -73,40 +72,63 @@ class remote_data_reader:
 
 	def read(self, ts_from, ts_to, filter = 'None'):
 
-		body = '%s:%d:%d:%s' % (self.file, ts_from, ts_to, filter)
+		body = '%s:%d:%d:%s' % (self.entity_table, ts_from, ts_to, filter)
 		cmd = 'GET %s %s %d\n' % (self.version, 'DATA', len(body))
 
 		return self.command(cmd, body)
 
-	def get_client_list(self):
+
+	def get_entity_list(self):
 		if self.sock is None:
 			self.connect()
 
 		body = 'dummy'
-		cmd = 'GET %s %s %d\n' % (self.version, 'CLIENT_LIST', len(body))
+		cmd = 'GET %s %s %d\n' % (self.version, 'ENTITY_LIST', len(body))
 
 		return self.command(cmd, body)
 
-	def get_data_list_of_client(self, client, prefix):
+	def get_table_list_of_entity(self, entity, prefix):
 		if self.sock is None:
 			self.connect()
 
-		body = '%s/%s' % (client, prefix)
-		cmd = 'GET %s %s %d\n' % (self.version, 'DATA_LIST_OF_CLIENT', len(body))
+		body = '%s/%s' % (entity, prefix)
+		cmd = 'GET %s %s %d\n' % (self.version, 'TABLE_LIST_OF_ENTITY', len(body))
 
 		return self.command(cmd, body)
 
 
-	def get_all_data_list(self, prefix):
+	def get_all_table_list(self, prefix):
 		if self.sock is None:
 			self.connect()
 
 		body = prefix
-		cmd = 'GET %s %s %d\n' % (self.version, 'ALL_DATA_LIST', len(body))
+		cmd = 'GET %s %s %d\n' % (self.version, 'ALL_TABLE_LIST', len(body))
 
 		return self.command(cmd, body)
 
 
-		
+
+class remote_storage_manager:
+	def __init__(self, addr):
+		self.addr = addr
+		toks = addr.split(':')
+		self.host = toks[0]
+		self.port = int(toks[1])
+
+		self.handle = remote_handle(None, self.host, self.port)
+
+	def get_handle(entity_table):
+		handle = remote_handle(entity_table, self.host, self.port)
+		return handle
+
+	def get_entity_list(self):
+		return self.handle.get_entity_list()
+
+	def get_table_list_of_entity(self, entity, prefix):
+		return self.handle.get_table_list_of_entity(entity, prefix)
+
+	def get_all_table_list(self, prefix):
+		return self.handle.get_all_table_list(prefix)
+
 
 

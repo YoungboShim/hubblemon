@@ -29,13 +29,12 @@ sys.path.append(hubblemon_path)
 import common.core
 
 class CollectListener:
-	def __init__(self, port, basedir):
+	def __init__(self, port):
 		self.port = port;
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.sock_node_map = {}
 		self.plugins = {}
-		self.basedir = basedir
 
 	def put_plugin(self, name, plug):
 		self.plugins[name] = plug
@@ -45,13 +44,11 @@ class CollectListener:
 		#print(socket.gethostname())
 		#print(self.port)
 		
+		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.sock.bind((socket.gethostname(), self.port))
 		self.sock.listen(5)
 
-		idx = 0
-		while count < 0 or idx < count:
-			idx += 1
-
+		while True:
 			inputs = [self.sock]
 			for sock in self.sock_node_map:
 				inputs.append(sock)
@@ -61,7 +58,7 @@ class CollectListener:
 			for sock in readable:
 				if sock == self.sock: # new client
 					conn, addr = self.sock.accept()
-					self.sock_node_map[conn] = CollectNode(conn, self.plugins, self.basedir)
+					self.sock_node_map[conn] = CollectNode(conn, addr, self.plugins)
 					print ('[%d]connect from %s(%s)' % (self.port, addr, conn.fileno()))
 					continue
 
@@ -73,6 +70,7 @@ class CollectListener:
 
 					# for dev (to check stack trace)
 					if node.do_op() == False:
+						print ('disconnected by exception: %d' % sock.fileno())
 						node.disconnect()
 						del self.sock_node_map[sock]
 
@@ -98,18 +96,23 @@ class CollectListener:
 
 
 
+
 class CollectNode:
-	def __init__(self, socket, plugins, basedir):
+	def __init__(self, socket, addr, plugins):
 		self.sock = socket
+		self.addr = addr
 
-		self.plugins = {}
-		for k, v in plugins.items():
-			self.plugins[k] = v.clone()
+		self.plugins = plugins
+		#for k, v in plugins.items():
+		#	self.plugins[k] = v.clone()
 
-		self.basedir = basedir
+		self.addr = addr
 
 	def do_op(self):
-		packet = self.sock.recv(4096)
+		packet = self.sock.recv(128)
+		#if self.addr[0] == '127.0.0.1':
+			#print(packet)
+
 		#print(packet)
 		if not packet:
 			return False
@@ -119,7 +122,13 @@ class CollectNode:
 			return False
 
 		header, body = packet.split(b'\n', 1)
-		header = header.decode('utf-8')
+		try:
+			header = header.decode('utf-8')
+		except UnicodeDecodeError as e:
+			print('>> protocol utf-8 error (stat): %s' % packet)
+			print(e)
+			print(header)
+			return False
 
 		if header.count(' ') != 3:
 			print('>> protocol error (stat-header): %s' % header)
@@ -137,7 +146,9 @@ class CollectNode:
 		# STAT VERSION HOST LENGTH
 		if type == 'STAT':
 			#print('recv: %d' % len(body))
-			self.do_stat(version, body)
+			ret = self.do_stat(version, body)
+			if ret == False:
+				return False
 
 		# GET VERSION CMD INFO
 		elif type == 'GET':
@@ -161,42 +172,45 @@ class CollectNode:
 			handle = common.core.get_default_local_handle(path)
 			ret = handle.read(start_ts, end_ts)
 			return ret
+		else:
+			print('protocol error (cmd): %s' % cmd)
+			return None
 
-		elif cmd == 'CLIENT_LIST':
-			client_list = []
+
+		'''
+		elif cmd == 'ENTITY_LIST':
+			entity_list = []
 			for dir in os.listdir(self.basedir):
 				dir_path = os.path.join(self.basedir, dir)
 				if os.path.isdir(dir_path):
-					client_list.append(dir)
+					entity_list.append(dir)
 			
-			return client_list
+			return entity_list
 		
-		elif cmd == 'DATA_LIST_OF_CLIENT':
-			data_list = []
+		elif cmd == 'TABLE_LIST_OF_ENTITY':
+			table_list = []
 			client, prefix = info.split('/')
 			path = os.path.join(self.basedir, client)
 
 			for file in os.listdir(path):
 				if file.startswith(prefix):
-					data_list.append(file)
+					table_list.append(file)
 
-			return data_list
+			return table_list
 
-		elif cmd == 'ALL_DATA_LIST':
-			data_list = []
+		elif cmd == 'ALL_TABLE_LIST':
+			table_list = []
 			for dir in os.listdir(self.basedir):
 				dir_path = os.path.join(self.basedir, dir)
 
 				if os.path.isdir(dir_path):
 					for file in os.listdir(dir_path):
 						if file.startswith(prefix):
-							data_list.append(dir + '/' + file)
+							table_list.append(dir + '/' + file)
 
-			return data_list
+			return table_list
+		'''
 
-		else:
-			print('protocol error (cmd): %s' % cmd)
-			return None
 
 	def do_stat(self, version, data):
 		result = pickle.loads(data)
@@ -217,7 +231,10 @@ class CollectNode:
 					continue
 
 				p = self.plugins[k]
-				p.create_data(hostname, v)
+				ret = p.create_data(hostname, v)
+				if ret == False:
+					return False
+
 				self.sock.send(b'OK')
 		else:
 			if '__stack__' in result:
@@ -241,7 +258,9 @@ class CollectNode:
 						continue
 
 					p = self.plugins[k]
-					p.update_data(hostname, result['datetime'].timestamp(), v)
+					ret = p.update_data(hostname, result['datetime'].timestamp(), v)
+					if ret == False:
+						return False
 
 					# tmp: add client, ts
 					v['client'] = result['client']

@@ -21,8 +21,6 @@
 import os, sys, time
 
 import collect_listener
-import server_rrd_plugin
-
 
 hubblemon_path = os.path.join(os.path.dirname(__file__), '..')
 sys.path.append(hubblemon_path)
@@ -30,26 +28,22 @@ sys.path.append(hubblemon_path)
 import common.settings
 
 
-def listener(port, path):
+def listener(port, storage_manager):
 	print('>>> start child listener %d (%d)' % (port, os.getpid()))
-	lsn = collect_listener.CollectListener(port, path)
-	lsn.put_plugin('default', server_rrd_plugin.server_rrd_plugin(path))
-	lsn.put_plugin('rrd', server_rrd_plugin.server_rrd_plugin(path))
-	
-	#time.sleep(5)
-	lsn.listen(50000) # set repeat count, because some leak in rrdtool
-	#lsn.listen() # solve above with Process
-	print('>>> stop child listener %d (%d)' % (port, os.getpid()))
+	lsn = collect_listener.CollectListener(port)
+	lsn.put_plugin('default', storage_manager)
 
+	lsn.listen()
+	print('>>> stop child listener %d (%d)' % (port, os.getpid()))
 	sys.exit()
 
-def restart_listener(port, path):
+def restart_listener(port, storage_manager):
 	while True:
 		print('>>> listener %d(%d) fork' % (port, os.getpid()))
 		pid = os.fork()
 
 		if pid == 0: # child
-			listener(port, path)
+			listener(port, storage_manager)
 		else: # parent
 			print('>>> listener %d (%d) wait' % (port, pid))
 			os.wait()
@@ -58,22 +52,20 @@ def restart_listener(port, path):
 	sys.exit()
 
 
-	
+
 for item in common.settings.listener_list:
 	addr = item[0]
-	path = item[1]
+	storage_manager = item[1]
+	if hasattr(storage_manager, 'optional_init'):
+		storage_manager.optional_init()
 
-	if path[0] != '/': # abs
-		path = os.path.join(hubblemon_path, path)
-	
 	ip, port = addr.split(':')
 	port = int(port)
-
 
 	pid = os.fork()
 
 	if pid == 0: # child
-		restart_listener(port, path)
+		restart_listener(port, storage_manager)
 
 
 os.wait()

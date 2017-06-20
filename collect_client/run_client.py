@@ -33,7 +33,8 @@ hostname = socket.gethostname()
 
 
 #server_address = ['1.1.1.1:40000', '2.2.2.2:40000'] # your collect server address
-server_address = ['%s:30000' % hostname] # your collect server address
+server_address = ['%s:40000' % hostname] # your collect server address
+
 
 if True:
 	c = collectd(hostname, server_address)
@@ -63,9 +64,14 @@ cub = cubrid_stat()
 cub.auto_register()
 c.plugins.append(cub)
 
+# redis stat example
+rds = redis_stat()
+rds.auto_arc_register()
+c.plugins.append(rds)
+
 # jstat stat example
 js = jstat_stat()
-js.auto_register(['java', 'apache', 'catalina'])
+js.auto_register(['java', 'apache', 'catalina'], trace=True)
 c.plugins.append(js)
 """
 

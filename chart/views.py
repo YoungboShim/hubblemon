@@ -59,6 +59,24 @@ def _make_time_range(param, link):
 		js_chart_list += script.render()
 
 
+	realtime = jquery_radio('realtime')
+	realtime.push_item('on')
+	realtime.push_item('off')
+	action = """
+		var s = $(this).attr('id');
+		var diff = 0;
+		if (s == 'on') {
+			window.location.href=%s + '&auto_update=5&diff=5';
+		}
+		else if (s == 'off') {
+			window.location.href=%s;
+		}
+
+	""" % (link, link)
+
+	realtime.set_action(action)
+
+
 	# radio button
 	range_radio = jquery_radio('range_radio')
 	range_radio.push_item('5m')
@@ -137,6 +155,9 @@ def _make_time_range(param, link):
 
 	range_radio.set_action(action)
 
+
+	
+
 	# input & rendering
 	date_template = """
 		<div class="date_range">
@@ -153,8 +174,9 @@ def _make_time_range(param, link):
 					}
 			})
 			</script>
-
 			</div>
+
+
 			&nbsp~&nbsp
 			<div id="date_end" style="display:inline">
 			<input type="text" id="end_date" value="%s">
@@ -168,14 +190,21 @@ def _make_time_range(param, link):
 					}
 			})
 			</script>
-
 			</div>
+
+
 			&nbsp &nbsp &nbsp
 			set start before
 			<div id="start_radio" style="display:inline">
 			%s
 			</div>
-			&nbsp
+
+			&nbsp &nbsp &nbsp
+			realtime
+			<div id="start_radio" style="display:inline">
+			%s
+			</div>
+			%s
 		</div>
 
 		
@@ -183,7 +212,63 @@ def _make_time_range(param, link):
 
 	end_date = datetime.datetime.now()
 	start_date = end_date - datetime.timedelta(0, 60*30)
-	js_chart_list += date_template % (start_date.strftime("%Y-%m-%d %H:%M"), link, end_date.strftime("%Y-%m-%d %H:%M"), link, range_radio.render()) # set initial time
+	if 'auto_update' in param:
+		try:
+			auto_update_time = int(param['auto_update']) * 1000
+		except:
+			auto_update_time = 5000
+
+		end_date += datetime.timedelta(0, 60)
+
+		auto_update = """
+		    <script type="text/javascript">
+		    setInterval(function() {
+			console.log("update chart");
+			var nd = new Date();
+			var ed = new Date(nd.getTime() + 60 * 1000);
+			var offset = ed.getTimezoneOffset() * 60;
+			ed.setSeconds(ed.getSeconds() - offset);
+			var end_ts = ed.getTime()/1000;
+
+			var start_ts = end_ts - %s*60;
+			var sd = new Date(start_ts*1000);
+
+			var sd_str = sd.toISOString();
+			var sd_date = sd_str.substring(0, 10);
+			var sd_time = sd_str.substring(11, 16);
+			sd_str = sd_date + " " + sd_time;
+
+			$('#start_date').val(sd_str);
+
+			var ed_str = ed.toISOString();
+			var ed_date = ed_str.substring(0, 10);
+			var ed_time = ed_str.substring(11, 16);
+			ed_str = ed_date + " " + ed_time;
+
+			$('#end_date').val(ed_str);
+
+			$.ajax(
+			{
+			    url : %s + '&start_date=' + $('#start_date').val() + '&end_date=' + $('#end_date').val() + '&auto_update=%d&diff=%s&ajax=true',
+			    type : "GET",
+			    dataType : 'json',
+			    success : function(data) {
+				console.log(data.reponse);
+				if(data.reponse == 'success') {
+				    $('.chart_area').html(data.chart_data);
+				}
+			    }
+			});
+		    }, %d);
+		    </script>
+		"""
+		if 'diff' in param:
+			auto_update = auto_update %(param['diff'], link, auto_update_time // 1000, param['diff'], auto_update_time)
+		else:
+			auto_update = auto_update %('30', link, auto_update_time // 1000, '30', auto_update_time)
+		js_chart_list += date_template % (start_date.strftime("%Y-%m-%d %H:%M"), link, end_date.strftime("%Y-%m-%d %H:%M"), link, range_radio.render(), realtime.render(), auto_update) # set initial time
+	else:
+		js_chart_list += date_template % (start_date.strftime("%Y-%m-%d %H:%M"), link, end_date.strftime("%Y-%m-%d %H:%M"), link, range_radio.render(), realtime.render(), '') # set initial time
 
 	return js_chart_list
 
@@ -337,29 +422,30 @@ def system_page(request):
 	print(request.GET)
 
 	levels = [ 'server', 'item' ]
-	system_list = []
+	entity_list = []
 	item_list = [ 'brief', 'cpu', 'memory', 'swap', 'disk', 'net', 'resource' ]
 
-	system_list = common.core.get_client_list()
+	entity_list = common.core.get_entity_list()
+	#print(entity_list)
 	
-	system_list.sort()
-	js_chart_list = _make_static_chart_list(request.GET, 'system', levels, [ system_list, item_list ])
+	entity_list.sort()
+	js_chart_list = _make_static_chart_list(request.GET, 'system', levels, [ entity_list, item_list ])
 
 	# chart data
 	js_chart_data = ''
-	chart_data_list = []
 	start_ts, end_ts = _get_ts(request.GET)
 
 	if 'server' in request.GET and request.GET['server'] != '' and 'item' in request.GET and request.GET['item'] != '':
-		loader_list_path = common.core.system_view(request.GET['server'], request.GET['item'])
-		for loader in loader_list_path:
-			ts = int(time.time())
-			chart_data_list += loader.load(start_ts, end_ts)
+		loader = common.core.system_view(request.GET['server'], request.GET['item'])
+		chart_data_list = loader.load(start_ts, end_ts)
 
 		js_chart_data = ''
 		for chart_data in chart_data_list:
 			js_chart_data += chart_data.render()
 		
+	if 'ajax' in request.GET:
+		return HttpResponse(json.dumps({'reponse': 'success', 'chart_data': js_chart_data}), content_type='application/json')
+
 	## make view
 	variables = RequestContext(request, { 'main_link':_make_main_link(), 'chart_list':js_chart_list, 'chart_data':js_chart_data } )
 	return render_to_response('system_page.html', variables)
@@ -400,6 +486,7 @@ def expr_page(request):
 			loader = eval(expr)
 			#print(loader)
 
+			# allow list or tuple in expr_text
 			if isinstance(loader, list) or isinstance(loader, tuple):
 				loaders = loader
 			else:
@@ -408,7 +495,9 @@ def expr_page(request):
 			## chart rendering
 			start_ts, end_ts = _get_ts(param)
 
+			print(loaders)
 			for loader in loaders:
+				print(loader)
 				if hasattr(loader, 'load'):
 					chart_data_list = loader.load(start_ts, end_ts)
 					for chart_data in chart_data_list:
@@ -434,6 +523,8 @@ def expr_page(request):
 			<input type="hidden" name="end_date" value="%s">''' % (start_date, end_date)
 	js_chart_list = _make_time_range(param, "'/expr?expr=%s'" % urllib.parse.quote(expr))
 
+	if 'ajax' in param:
+		return HttpResponse(json.dumps({'reponse': 'success', 'chart_data': js_chart_data}), content_type='application/json')
 	## make view
 	variables = RequestContext(request, { 'main_link':_make_main_link(), 'expr_form':expr_form, 'date_range':date_range, 'chart_list':js_chart_list, 'chart_data':js_chart_data} )
 	return render_to_response('expr_page.html', variables)
@@ -479,31 +570,24 @@ def chart_page(request):
 
 
 	# case 3. select all (make data)
-	ret = common.core.get_chart_data(param)
-	#print(ret)
+	loader = common.core.get_chart_data(param)
+	#print(loader)
 
-	if ret == None:
+	if loader == None:
 		variables = RequestContext(request, { 'main_link':_make_main_link(), 'chart_data':'Unknown chart id'} )
 		return render_to_response('chart_page.html', variables)
 
-	loaders = ret
-
 	## chart rendering
-	chart_data_list = []
 	start_ts, end_ts = _get_ts(request.GET)
-
-	if not isinstance(loaders, list):
-		loaders = [loaders]
-
-	for loader in loaders:
-		chart_data_list += loader.load(start_ts, end_ts)
+	chart_data_list = loader.load(start_ts, end_ts)
 
 	js_chart_data = ''
 	for chart_data in chart_data_list:
 		js_chart_data += chart_data.render()
 
-
 	## make view
+	if 'ajax' in param:
+		return HttpResponse(json.dumps({'reponse': 'success', 'chart_data': js_chart_data}), content_type='application/json')
 	variables = RequestContext(request, { 'main_link':_make_main_link(), 'chart_list':js_chart_list, 'chart_data':js_chart_data } )
 	return render_to_response('chart_page.html', variables)
 
